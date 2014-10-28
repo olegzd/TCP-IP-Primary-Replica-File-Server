@@ -26,6 +26,7 @@
 #define TEST_PORT "3490"
 
 
+
 /// Creates a server socket and listens for incoming connections to ip:port.
 /// This is a blocking call, so call it last!
 void setupServerSocket(const char *ip, const char* port) {
@@ -78,13 +79,72 @@ void setupServerSocket(const char *ip, const char* port) {
     printf("Connection received\n");
 }
 
+// Processes request header and puts into transaction header
+// Returns a malloc'ed transaction header - must free after use
+transaction *parseRequest(char *request) {
+    transaction *txn = (transaction*) malloc(sizeof(transaction));
+    std::string requestnew = request;
+    std::string delimeter = " ";
+    std::string delimeterNoData = "\r\n\r\n\r\n";
+    std::string delimeterData = "\r\n\r\n";
+    std::string tokens[5]; // 5 strings for all variables (including data)
+    size_t index;
+    
+    // Got the first 3 space delimited arguments
+    for(int i =0; i <= 2; i++) {
+        tokens[i] = requestnew.substr(0, requestnew.find(delimeter));
+        requestnew.erase(0, tokens[i].length()+1);
+    }
+    
+    // If no data delimiter found, check for data!
+    index = requestnew.find(delimeterData);
+    if(index != std::string::npos) {
+        tokens[3] = requestnew.substr(0, index);
+        requestnew.erase(0, tokens[3].length()+strlen("\r\n\r\n"));
+        tokens[4] = requestnew;
+        txn->data = &tokens[4][0];
+    } else {
+        printf("No data in this message\n");
+        index = requestnew.find(delimeterNoData);
+        tokens[3] = requestnew.substr(0, index);
+    }
+    
+    // Fill out transcation struct
+
+    txn->CONTENT_LEN =atoi(&tokens[3][0]);
+    txn->SEQUENCE_NUMBER = atoi(&tokens[2][0]);
+    txn->TRANSACTION_ID = atoi(&tokens[1][0]);
+    
+    if(strcmp(&tokens[0][0], "READ") ==0) {
+       txn->METHOD = READ;
+    } else if(strcmp(&tokens[0][0], "NEW_TXN")) {
+       txn->METHOD = NEW_TXN;
+    } else if(strcmp(&tokens[0][0], "WRITE")) {
+       txn->METHOD = WRITE;
+    } else if(strcmp(&tokens[0][0], "COMMIT")) {
+       txn->METHOD = COMMIT;
+    } else if(strcmp(&tokens[0][0], "ABORT")) {
+       txn->METHOD = ABORT;
+    }
+    return txn;
+}
 
 int main() {
     
     // Initialize file System
     initializeFileSystem("/Users/olegzdornyy/Documents/testfs");
+    //char *readData = readFile("a");
+    //printf("%s\n", readData);
+    //free(readData);
     
+    char *sampleCommand = "NEW_TXN -1 0 8\r\n\r\ntestfile";
     
+    transaction *txn = parseRequest(sampleCommand);
+    printf("Data given is: %s\n", txn->data);
+    processTransaction(txn);
+
+    
+
     
     // Create a socker + listner - this thread is now blocked forever on this call.
     //setupServerSocket(NULL, "3490");

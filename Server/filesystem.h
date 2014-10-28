@@ -9,7 +9,9 @@
 #ifndef Server_filesystem_h
 #define Server_filesystem_h
 
+#include <sys/types.h>
 #include "operations.h"
+
 
 typedef struct transaction transaction;
 
@@ -23,5 +25,10 @@ struct transaction {
 
 char *processTransaction(transaction *txn);
 void initializeFileSystem(const char* fullPath);
+
+/// Gets the data in char* format. This data is from malloc, so must free after use
+char *readFile(char *fileName);
+
+void writeToFile(char *fileName, char *data, size_t len);
 
 #endif
