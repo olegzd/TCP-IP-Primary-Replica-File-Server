@@ -7,7 +7,7 @@
 #include <netdb.h>
 #include <mutex>
 #include <arpa/inet.h>
-
+#include "filesystem.h"
 
 /*
  Steps:
@@ -25,7 +25,6 @@
 #define MAX_CONNECTIONS 2
 #define TEST_PORT "3490"
 
-std::map <char*, pthread_mutex_t> fileHash;
 
 /// Creates a server socket and listens for incoming connections to ip:port.
 /// This is a blocking call, so call it last!
@@ -79,20 +78,6 @@ void setupServerSocket(const char *ip, const char* port) {
     printf("Connection received\n");
 }
 
-void initializeFileSystem(const char* fullPath) {
-    DIR *dir = opendir(fullPath);
-    dirent *file;
-    
-    // Check what files exist and add them to the hash table - initialize mutexes for each file
-    while( (file = readdir(dir)) != NULL) {
-        // Don't bother with . or .. files
-        if( strncmp(file->d_name, "..", sizeof("..")) && strncmp(file->d_name, ".", sizeof(".")) ) {
-            pthread_mutex_init(&fileHash[file->d_name], NULL);
-        }
-    }
- 
-    printf("File system initialized\n");
-}
 
 int main() {
     
