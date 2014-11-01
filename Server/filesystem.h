@@ -13,21 +13,27 @@
 #include "operations.h"
 
 
-typedef struct transaction transaction;
+typedef struct Transaction Transaction;
 
-struct transaction {
- int METHOD;
- int TRANSACTION_ID;
- int SEQUENCE_NUMBER;
- int CONTENT_LEN;
- char *data;
+struct Transaction {
+    int METHOD;
+    int TRANSACTION_ID;
+    int SEQUENCE_NUMBER;
+    int CONTENT_LEN;
+    char *data;
+    char *raw;
+    
+    // Comparison operator
+    bool operator <(const Transaction  &other) {return SEQUENCE_NUMBER < other.SEQUENCE_NUMBER; };
  };
 
-char *processTransaction(transaction *txn);
-void initializeFileSystem(const char* fullPath);
+char *processTransaction(Transaction *txn);
+void initializeFileSystem(const char* fullPath, char *ip, char *port);
 
 /// Gets the data in char* format. This data is from malloc, so must free after use
 char *readFile(char *fileName);
+
+void startFakeNewTranscation(Transaction *tx[], int count);
 
 void writeToFile(char *fileName, char *data, size_t len);
 
