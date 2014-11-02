@@ -20,6 +20,7 @@ struct Transaction {
     int TRANSACTION_ID;
     int SEQUENCE_NUMBER;
     int CONTENT_LEN;
+    int SOCKET_FD = -1;
     char *data;
     char *raw;
     
@@ -29,6 +30,7 @@ struct Transaction {
 
 char *processTransaction(Transaction *txn);
 void initializeFileSystem(const char* fullPath, char *ip, char *port);
+int getBiggestTransactionID();
 
 /// Gets the data in char* format. This data is from malloc, so must free after use
 char *readFile(char *fileName);
@@ -36,5 +38,7 @@ char *readFile(char *fileName);
 void startFakeNewTranscation(Transaction *tx[], int count);
 
 void writeToFile(char *fileName, char *data, size_t len);
+
+void *startNewTranscation(void *socketfd);
 
 #endif

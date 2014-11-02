@@ -9,7 +9,7 @@
 #include "filesystem.h"
 
 #include <algorithm> // sort
-#include <time.h>
+#include <stdio.h>
 #include <vector>
 #include <errno.h>
 #include <unistd.h>
@@ -17,16 +17,20 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <dirent.h>
 #include <string.h>
 #include <string> // for std::string
 #include <queue>
 #include <mutex>
+#include <sys/socket.h>
 #include <map>
+#include "server.h"
 
 #define LOG_FILE_NAME ".log"
-
+#define INCOMING_BUFFER_LEN 4096
+#define OUTPUT_BUFFER_LEN 1024
 
 /*
  * Variables used globally by filesystem.cpp
@@ -34,12 +38,22 @@
  */
 std::map<std::string, pthread_mutex_t>    fileHash;
 std::map<std::string, int>          test;
+std::map<int, bool>                 transactionComplete;
 char                                directory[256];
 char                                *readFile(char *fileName);
 pthread_mutex_t                     id_mutex;
 pthread_mutex_t                     log_mutex;
 int                                 lastTransactionId=0;
 FILE                                *logFile;
+
+/*
+ * Global variables.
+ *
+ */
+// Global condition variables.
+std::map<int, pthread_cond_t>    conditionVars; // Used to signal a thread with TRANSACTION_ID (int)
+pthread_mutex_t                  conditionsMutex; // Mutex that must be locked to access reconnectedSocket
+std::map<int, Transaction*>      reconnectedSocket; // Holds the latest Transaction struct it got
 
 /*
  * Method pre-declarations
@@ -60,7 +74,6 @@ void recoveryCheck() {
     
     std::string temp(".log");
     if(fileHash.count(temp) >0 ) {
-        printf(".log file exists\n");
         //
         // Insert recovery functionality here
         //
@@ -84,6 +97,7 @@ void initializeFileSystem(const char* fullPath, char *ip, char * port) {
 
     pthread_mutex_init(&id_mutex, NULL);
     pthread_mutex_init(&log_mutex, NULL);
+    pthread_mutex_init(&conditionsMutex, NULL);
     
     //
     //
@@ -109,31 +123,6 @@ void initializeFileSystem(const char* fullPath, char *ip, char * port) {
     
 }
 
-
-/*
- *
- *
- */
-/*void processTransaction(Transaction *txn[], int count, int method) {
-    switch (method) {
-        case READ:
-            char *readin = readFile(txn->data);
-            printf("%s\n", readin);
-            free(readin);
-            break;
-        case WRITE:
-            for(int i=0; i<count; i++){
-                writeToDisk(txn);
-            }
-            break;
-        default:
-            printf("Invalid Transaction\n");
-            return;
-    }
-    
-    printf("Successfully read Transaction!\n");
-}*/
-
 /*
  *
  *
@@ -149,6 +138,20 @@ int getNewTransactionID() {
     return id;
 }
 
+/* Get latest transaction ID
+ *
+ *
+ */
+int getBiggestTransactionID() {
+    int id = -1;
+    
+    pthread_mutex_lock(&id_mutex);
+    id = lastTransactionId;
+    pthread_mutex_unlock(&id_mutex);
+    
+    return id;
+}
+
 /*
  * Check a queue of transactions and see if any are missing.
  *
@@ -156,7 +159,6 @@ int getNewTransactionID() {
  */
 std::queue<int> checkMissingSequences( std::queue<Transaction *> transactions ) {
     int             lastSequence     = transactions.back()->SEQUENCE_NUMBER; // Last transaction
-    int             sumOfTransactions   = 0;
     size_t          count               = transactions.size();
     int             sequences[count];
     std::queue<int> missingSequences;
@@ -290,7 +292,6 @@ void writeToDisk(std::queue<Transaction *> messages) {
         free(toFree);
     }
     
-   
     // Force flush to disk & close.
     fflush(file);
     fflush(file);
@@ -313,76 +314,212 @@ void writeToDisk(std::queue<Transaction *> messages) {
  * Fake new Transaction dealing mechanisms - will eventually be a threaded mechanism
  *
  */
-void startFakeNewTranscation(Transaction *tx[], int count) {
+void *startNewTranscation(void *socketfd) {
+    
     // Transaction     *newtx = tx[0]; //  TESTING - holds the NEW_TXN datagram
     std::queue<Transaction*> transactions; // HOLDS THE TRANSACTIONS (IN RAM & WRITES OUT)
-    //int             currentSequence;
-    int             transactionId;
-    char            *filename = NULL;
-    // int             sumOfTransactions = 0;
-    // int             lastTransaction = -1;
+    //int               currentSequence;
+    int                 transactionId = -2000;
+    char                *filename = NULL;
+    // int              sumOfTransactions = 0;
+    // int              lastTransaction = -1;
     std::queue<int> missing;
     int TRANSACTION_METHOD = -1;
+    
+    char data[INCOMING_BUFFER_LEN];
+    char reply[OUTPUT_BUFFER_LEN];
+    
+    int socket = *(int*)socketfd;
+    
+    printf("Connection received\n");
 
-    // Replace with a listening mechanism
-    for(int i = 0; i < count; i++) {
-        switch (tx[i]->METHOD) {
+    while(1) {
+
+        
+        // Get data.
+        ssize_t incoming = 0;
+        
+        // Fragmentation loop - get byte by byte
+        while( (incoming =recv(socket, data+incoming, INCOMING_BUFFER_LEN-incoming, 0) ) != 0 ) {
+            if( (strstr(data, "\r\n\r\n\r\n") != NULL) || (strstr(data, "\r\n\r\n") != NULL)  ){
+                // We got the expected end of string.
+                printf("Got data! %s\n", data);
+                break;
+            }
+        }
+RECONNECTED:
+        Transaction *tx;
+        
+        // Check that connection hasn't been closed. If so, goto MONITOR.
+        if(incoming == 0) {
+            if(transactionId == -2000) {
+                return NULL;
+            }
+            printf("Connection closed. Going to MONITOR.\n");
+            goto MONITOR;
+        }
+        
+        data[incoming] = '\0';
+        
+        // Parse message.
+        printf("Incoming data. Size: %lu.  Data: %s\n\n",incoming, data);
+        tx = parseRequest(data);
+        
+        // Check if this message is meant for a different transaction
+        if(transactionId == -2000) {
+            if(tx->METHOD != NEW_TXN) {
+                if(transactionComplete[tx->TRANSACTION_ID]) {
+                    // Invalid Transaction ID - send back an error
+                    snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ERROR", transactionId, 0, 201, 0, "\r\n\r\nInvalid TXN ID");
+                    printf("Sending back: %s\n", reply);
+                    send(socket, reply, strlen(reply), 0);
+                } else {
+                    printf("Closing connection - this is a valid ID\n");
+                    // This is a valid transaction ID
+                    // Signal condition of thread with this Transaction ID
+                    // and put data into shared hash.
+                    tx->SOCKET_FD = socket;
+                    pthread_mutex_lock(&conditionsMutex);
+                    
+                    reconnectedSocket[tx->TRANSACTION_ID] = tx;
+                    
+                    // Signal existing thread that a new socket exists.
+                    pthread_cond_signal(&conditionVars[tx->TRANSACTION_ID]);
+                    
+                    pthread_mutex_unlock(&conditionsMutex);
+                    goto CLOSE_CONNECTION;
+                }
+            }
+        }
+        // If this is a reconnected connection, tx will
+        // have a new socket descriptor.
+        if(tx->SOCKET_FD != -1) {
+            printf("Assigning new socket %i\n", tx->SOCKET_FD);
+            socket = tx->SOCKET_FD;
+        }
+        
+        // Check to make sure we have a valid TRANSACTION IDs.
+        if(transactionId != -2000) {
+            if(tx->TRANSACTION_ID != transactionId && tx->METHOD != NEW_TXN) {
+                // Send ERROR back to server.
+                snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ERROR", transactionId, 0, 201, 0, "\r\n\r\nInvalid TXN ID");
+                printf("Sending back: %s\n", reply);
+                send(socket, reply, strlen(reply), 0);
+            }
+        }
+        switch (tx->METHOD) {
             case NEW_TXN:
                 
                 printf("Starting new transaction\n");
                 transactionId = getNewTransactionID();
-                filename = tx[i]->data;
+                filename = tx->data;
                 
-                if(filename == NULL) {
-                    printf("No filename!\n");
-                    return;
-                }
+                // Write to log.
+                writeMessageToLog(tx);
                 
-                transactions.push(tx[i]);
-                writeMessageToLog(tx[i]);
-                break;
+                // Send ACK back.
+                snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ACK", transactionId, 0, 0, 0, "\r\n\r\n\r\n");
+                send(socket, reply, strlen(reply), 0);
+                
+                // Write to RAM.
+                transactions.push(tx);
+                
+                // Initialize the condition variable
+                pthread_mutex_lock(&conditionsMutex);
+                pthread_cond_init(&conditionVars[transactionId], NULL);
+                pthread_mutex_unlock(&conditionsMutex);
+                
+                continue;
             case READ:
-                writeMessageToLog(tx[i]);
+                
+                // Write to log.
+                writeMessageToLog(tx);
                 TRANSACTION_METHOD = READ;
-                break;
+                
+                // Send ACK back.
+                snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ACK", transactionId, 0, 0, 0, "\r\n\r\n\r\n");
+                send(socket, reply, strlen(reply), 0);
+                
+                // Write to RAM.
+                transactions.push(tx);
+                continue;
             case WRITE:
-                transactions.push(tx[i]);
-                writeMessageToLog(tx[i]);
+               
+                // Write to log.
+                writeMessageToLog(tx);
                 TRANSACTION_METHOD = WRITE;
-                break;
+                
+                // Send ACK back.
+                snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ACK", transactionId, 0, 0, 0, "\r\n\r\n\r\n");
+                send(socket, reply, strlen(reply), 0);
+                
+                // Write to RAM.
+                transactions.push(tx);
+                continue;
             case COMMIT:
-                transactions.push(tx[i]);
+                // Write to log.
+                writeMessageToLog(tx);
+                
+                // Check for missing sequences.
                 missing = checkMissingSequences(transactions);
                 if(missing.size() > 0) {
-                    // run algorithm get missing sequences
                     printf("We're missing sequences!\n");
-                    return;
+                    continue;
                 } else {
                     transactions = sortMessages(transactions);
-                    writeMessageToLog(tx[i]);
+                    
+                    // Send ACK back.
+                    snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ACK", transactionId, 0, 0, 0, "\r\n\r\n\r\n");
+                    send(socket, reply, strlen(reply), 0);
+                    
+                    // Write to RAM.
+                    transactions.push(tx);
+                    
+                    // Only reaches here if transaction successfully commited.
+                    if (TRANSACTION_METHOD == WRITE) {
+                        printf("Writing\n");
+                        writeToDisk(transactions);
+                    }
+                    if (TRANSACTION_METHOD == READ) {
+                        char *readin = readFile(filename);
+                        printf("READING: %s\n", readin);
+                        goto CLEANUP;
+                    }
                 }
                 break;
             case ABORT:
-                writeMessageToLog(tx[i]);
+                writeMessageToLog(tx);
+                
+                // Send ACK back.
+                snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ACK", transactionId, 0, 0, 0, "\r\n\r\n\r\n");
+                send(socket, reply, strlen(reply), 0);
+                
                 printf("Transaction aborted\n");
                 goto CLEANUP;
             default:
-                printf("Invalid Transaction\n");
-                return;
-        }
+                printf("Invalid Transaction. Closing connection.\n");
+                goto CLEANUP;
+        } // end of switch.
+        
+MONITOR:
+        printf("Waiting until connection reachieved\n");
 
-    }
-    
-    if (TRANSACTION_METHOD == WRITE) {
-        writeToDisk(transactions);
-        return;
-    }
-    if (TRANSACTION_METHOD == READ) {
-        char *readin = readFile(filename);
-        printf("READING: %s\n", readin);
-        goto CLEANUP;
-    }
+        pthread_mutex_lock(&conditionsMutex);
+        pthread_cond_wait(&conditionVars[transactionId], &conditionsMutex);
+        
+        tx = reconnectedSocket[transactionId];
+        printf("Reconnected socket: %i\n", tx->SOCKET_FD);
+        
+        pthread_mutex_unlock(&conditionsMutex);
+        printf("Connection RE Achieved!\n");
+        goto RECONNECTED;
+        
+    } // end of while.
+
+
+
 CLEANUP:
+    transactionComplete[transactionId] = true;
     for(int i=0; i <transactions.size(); i++) {
         Transaction *temp = transactions.front();
         transactions.pop();
@@ -393,7 +530,13 @@ CLEANUP:
         free(temp->raw);
         free(temp);
     }
+CLOSE_CONNECTION:
+    printf("closing connection\n");
+    decrease_connection_sem();
+    return NULL;
 }
+
+
 
 /*
  * Read a file from directory/filename.
@@ -474,7 +617,92 @@ void writeToFile(char *fileName, char *data, size_t len) {
     pthread_mutex_unlock(&fileHash[fileName]);
 }
 
-
+/*
+ *
+ * Fake new Transaction dealing mechanisms - will eventually be a threaded mechanism
+ *
+ */
+void startFakeNewTranscation(Transaction *tx[], int count) {
+    // Transaction     *newtx = tx[0]; //  TESTING - holds the NEW_TXN datagram
+    std::queue<Transaction*> transactions; // HOLDS THE TRANSACTIONS (IN RAM & WRITES OUT)
+    //int             currentSequence;
+    int             transactionId;
+    char            *filename = NULL;
+    // int             sumOfTransactions = 0;
+    // int             lastTransaction = -1;
+    std::queue<int> missing;
+    int TRANSACTION_METHOD = -1;
+    
+    // Replace with a listening mechanism
+    for(int i = 0; i < count; i++) {
+        switch (tx[i]->METHOD) {
+            case NEW_TXN:
+                
+                printf("Starting new transaction\n");
+                transactionId = getNewTransactionID();
+                filename = tx[i]->data;
+                
+                if(filename == NULL) {
+                    printf("No filename!\n");
+                    return;
+                }
+                
+                transactions.push(tx[i]);
+                writeMessageToLog(tx[i]);
+                break;
+            case READ:
+                writeMessageToLog(tx[i]);
+                TRANSACTION_METHOD = READ;
+                break;
+            case WRITE:
+                transactions.push(tx[i]);
+                writeMessageToLog(tx[i]);
+                TRANSACTION_METHOD = WRITE;
+                break;
+            case COMMIT:
+                transactions.push(tx[i]);
+                missing = checkMissingSequences(transactions);
+                if(missing.size() > 0) {
+                    // run algorithm get missing sequences
+                    printf("We're missing sequences!\n");
+                    return;
+                } else {
+                    transactions = sortMessages(transactions);
+                    writeMessageToLog(tx[i]);
+                }
+                break;
+            case ABORT:
+                writeMessageToLog(tx[i]);
+                printf("Transaction aborted\n");
+                goto CLEANUP;
+            default:
+                printf("Invalid Transaction\n");
+                return;
+        }
+        
+    }
+    
+    if (TRANSACTION_METHOD == WRITE) {
+        writeToDisk(transactions);
+        return;
+    }
+    if (TRANSACTION_METHOD == READ) {
+        char *readin = readFile(filename);
+        printf("READING: %s\n", readin);
+        goto CLEANUP;
+    }
+CLEANUP:
+    for(int i=0; i <transactions.size(); i++) {
+        Transaction *temp = transactions.front();
+        transactions.pop();
+        
+        if(temp->data != NULL) {
+            free(temp->data);
+        }
+        free(temp->raw);
+        free(temp);
+    }
+}
 
 
 

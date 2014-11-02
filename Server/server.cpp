@@ -9,6 +9,8 @@
 #include <arpa/inet.h>
 #include <getopt.h>
 #include "filesystem.h"
+#include <semaphore.h>
+#include "server.h"
 
 /*
  Steps:
@@ -23,8 +25,19 @@
  Tutorial followed at http://beej.us/guide/bgnet/output/html/multipage/syscalls.html
  */
 
-#define MAX_CONNECTIONS 2
-#define TEST_PORT "3490"
+
+#define         MAX_CONNECTIONS 2
+#define         TEST_PORT "3490"
+
+
+
+pthread_t       threads[32]; // MAX 32 Connections - otherwise hold
+sem_t           *threadSem;
+int             threadCount=32;
+pthread_mutex_t threadCountMutex;
+
+bool connectionAlreadyExists(char *message);
+bool checkValidTransactionID(char *message);
 
 
 
@@ -35,15 +48,22 @@ void setupServerSocket(const char *ip, const char* port) {
     struct addrinfo serverInfo;
     struct addrinfo *res;
     socklen_t addr_size;
-    int sock, incomingSocket;
-    char *ipv4;
+    int sock;
+    char ipv4[20];
+    char portaddr[6];
+    char incomingBuf[4096];
     
+    // Initialize Server
     if(ip == NULL) {
-        ipv4 = "127.0.0.1";
+        strlcpy(ipv4, "127.0.0.1", 20);
     } else {
-        memcpy(ipv4, ip, strlen(ip));
+        strlcpy(ipv4, ip, 20);
     }
-    
+    if(port == NULL) {
+        strlcpy(portaddr, "8080", 6);
+    } else {
+        strlcpy(portaddr, port, 6);
+    }
     
     // Setup socket
     memset(&serverInfo, 0, sizeof(serverInfo));
@@ -70,26 +90,95 @@ void setupServerSocket(const char *ip, const char* port) {
     struct in_addr addr;
     addr.s_addr = ((struct sockaddr_in *)(res->ai_addr))->sin_addr.s_addr;
     printf("ip address : %s\n", inet_ntoa(addr));
+    printf("port: %s\n", portaddr);
     freeaddrinfo(res);
     
     // Set the socket to listen
     listen(sock, MAX_CONNECTIONS);
-    
+
     addr_size = sizeof(incomingAddr);
-    incomingSocket = accept(sock, (struct sockaddr *)&incomingAddr, &addr_size);
-    printf("Connection received\n");
+    
+    // Receive connections.
+    while(1) {
+        int *incomingSocket = (int*)malloc(sizeof(*incomingSocket));
+        *incomingSocket = accept(sock, (struct sockaddr *)&incomingAddr, &addr_size);
+        if(incomingSocket < 0) {
+            printf("Error - could not resolve new socket!\n");
+            free(incomingSocket);
+        } else {
+            printf("Forking off new thread!\n");
+            int threadIndex = decrease_connection_sem();
+            pthread_create(&threads[threadIndex], NULL, startNewTranscation, (void*)incomingSocket);
+        }
+    }
 }
+
+int decrease_connection_sem() {
+    int threadIndex = -1;
+    sem_wait(threadSem);
+    
+    // Critical section (I just like saying that :) )
+    pthread_mutex_lock(&threadCountMutex);
+    threadIndex = threadCount;
+    threadCount--;
+    pthread_mutex_unlock(&threadCountMutex);
+    
+    return threadIndex;
+}
+
+void post_connection_sem() {
+    sem_post(threadSem);
+    pthread_mutex_lock(&threadCountMutex);
+    threadCount++;
+    pthread_mutex_unlock(&threadCountMutex);
+}
+
+/*
+ * Checks if valid transaction occurred
+ * Returns zero if NEW_TXN
+ * Returns -1 if invalid
+ * Returns transaction ID elsewise
+ */
+bool checkValidTransactionID(char *message) {
+    Transaction         txn;
+    std::string         requestnew = message;
+    std::string         delimeter = " ";
+    std::string         delimeterNoData = "\r\n\r\n\r\n";
+    std::string         delimeterData = "\r\n\r\n";
+    std::string         tokens[4];
+    int                 maxID;
+
+    // Get the first 3 space delimited arguments
+    for(int i =0; i <= 2; i++) {
+        tokens[i] = requestnew.substr(0, requestnew.find(delimeter));
+        requestnew.erase(0, tokens[i].length()+1);
+    }
+    
+    txn.TRANSACTION_ID = atoi(&tokens[1][0]);
+    maxID = getBiggestTransactionID();
+                                                  
+    if(strcmp(&tokens[0][0], "NEW_TXN") == 0) {
+        return 0;
+    }
+    
+    if(maxID < txn.TRANSACTION_ID) {
+        return -1;
+    } else {
+        return txn.TRANSACTION_ID;
+    }
+}
+
 
 // Processes request header and puts into Transaction header
 // Returns a malloc'ed Transaction header - must free after use
 Transaction *parseRequest(const char *request) {
-    Transaction *txn = (Transaction*) malloc(sizeof(Transaction));
-    std::string requestnew = request;
-    std::string delimeter = " ";
-    std::string delimeterNoData = "\r\n\r\n\r\n";
-    std::string delimeterData = "\r\n\r\n";
-    std::string tokens[5]; // 5 strings for all variables (including data)
-    size_t index;
+    Transaction         *txn = (Transaction*) malloc(sizeof(Transaction));
+    std::string         requestnew = request;
+    std::string         delimeter = " ";
+    std::string         delimeterNoData = "\r\n\r\n\r\n";
+    std::string         delimeterData = "\r\n\r\n";
+    std::string         tokens[5]; // 5 strings for all variables (including data)
+    size_t              index;
     
     // Got the first 3 space delimited arguments
     for(int i =0; i <= 2; i++) {
@@ -99,6 +188,7 @@ Transaction *parseRequest(const char *request) {
     
     txn->SEQUENCE_NUMBER = atoi(&tokens[2][0]);
     txn->TRANSACTION_ID = atoi(&tokens[1][0]);
+    txn->SOCKET_FD = -1;
     
     // If no data delimiter found, check for data!
     index = requestnew.find(delimeterData);
@@ -168,13 +258,13 @@ void runTest() {
     printf("\n\n********STARTING NEW TEST (long write - unsorted)***********\n\n");
     
     const char *sampleRequestb = "NEW_TXN -1 0 6\r\n\r\ngarrus";
-    const char *sampleRequest2b = "WRITE 0 1 8\r\n\r\nSuccess1";
-    const char *sampleRequest3b = "WRITE 0 2 8\r\n\r\nSuccess2";
-    const char *sampleRequest4b = "WRITE 0 3 8\r\n\r\nSuccess3";
-    const char *sampleRequest5b = "WRITE 0 4 8\r\n\r\nSuccess4";
-    const char *sampleRequest6b = "WRITE 0 5 8\r\n\r\nSuccess5";
-    const char *sampleRequest7b = "WRITE 0 6 8\r\n\r\nSuccess6";
-    const char *sampleRequest8b = "WRITE 0 7 8\r\n\r\nSuccess7";
+    const char *sampleRequest2b = "WRITE 0 1 10\r\n\r\nSuccess1\n";
+    const char *sampleRequest3b = "WRITE 0 2 10\r\n\r\nSuccess2\n";
+    const char *sampleRequest4b = "WRITE 0 3 10\r\n\r\nSuccess3\n";
+    const char *sampleRequest5b = "WRITE 0 4 10\r\n\r\nSuccess4\n";
+    const char *sampleRequest6b = "WRITE 0 5 10\r\n\r\nSuccess5\n";
+    const char *sampleRequest7b = "WRITE 0 6 10\r\n\r\nSuccess6\n";
+    const char *sampleRequest8b = "WRITE 0 7 10\r\n\r\nSuccess7\n";
     const char *sampleRequest9b = "COMMIT 0 7 0\r\n\r\n\r\n";
     Transaction *txn1b = parseRequest(sampleRequestb);
     Transaction *txn2b = parseRequest(sampleRequest2b);
@@ -233,16 +323,21 @@ int main(int argc, char *argv[]) {
         printf("No directory argument found! Aborting\n");
     }
     
+    
     // Initialize the server
     initializeFileSystem(dir, ip, port);
     
     // Run tests
-    runTest();
+    //runTest();
+    
+    // Initialize semaphore & mutexes
+    threadSem = sem_open("threadsem", 32);
+    pthread_mutex_init(&threadCountMutex, NULL);
     
     
-    
-    // Create a socker + listner - this thread is now blocked forever on this call.
-    //setupServerSocket(NULL, "3490");
+    // Create a socket + listner.
+    // This thread is now listening from this call
+    setupServerSocket(ip, port);
     
     return 0;
     
