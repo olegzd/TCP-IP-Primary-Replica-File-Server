@@ -28,9 +28,12 @@ struct Transaction {
     bool operator <(const Transaction  &other) {return SEQUENCE_NUMBER < other.SEQUENCE_NUMBER; };
  };
 
+
 char *processTransaction(Transaction *txn);
 void initializeFileSystem(const char* fullPath, char *ip, char *port);
 int getBiggestTransactionID();
+
+void *recoveryCheck( void *args );
 
 /// Gets the data in char* format. This data is from malloc, so must free after use
 char *readFile(char *fileName);

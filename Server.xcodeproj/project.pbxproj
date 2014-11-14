@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		8E027E8A1A061C7F0021B53B /* recoveryClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8E027E891A061C7F0021B53B /* recoveryClient.cpp */; };
 		8E649EC619FEED3A00B69C3B /* filesystem.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8E649EC519FEED3A00B69C3B /* filesystem.cpp */; };
 		8ECB91A119FDE86A00613CE9 /* server.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8ECB91A019FDE86A00613CE9 /* server.cpp */; };
 /* End PBXBuildFile section */
@@ -24,6 +25,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		8E027E871A061C300021B53B /* recoveryClient.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = recoveryClient.h; sourceTree = "<group>"; };
+		8E027E891A061C7F0021B53B /* recoveryClient.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = recoveryClient.cpp; sourceTree = "<group>"; };
 		8E1B51FD19FF1E5500492A4D /* filesystem.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = filesystem.h; sourceTree = "<group>"; };
 		8E2EEFF71A0487480033F16F /* server.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = server.h; path = ../server.h; sourceTree = "<group>"; };
 		8E649EC519FEED3A00B69C3B /* filesystem.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = filesystem.cpp; sourceTree = "<group>"; };
@@ -64,6 +67,8 @@
 			children = (
 				8E2EEFF71A0487480033F16F /* server.h */,
 				8ECB91A019FDE86A00613CE9 /* server.cpp */,
+				8E027E871A061C300021B53B /* recoveryClient.h */,
+				8E027E891A061C7F0021B53B /* recoveryClient.cpp */,
 				8E649EC519FEED3A00B69C3B /* filesystem.cpp */,
 				8E1B51FD19FF1E5500492A4D /* filesystem.h */,
 				8E649EC719FEEDBB00B69C3B /* operations.h */,
@@ -129,6 +134,7 @@
 			files = (
 				8E649EC619FEED3A00B69C3B /* filesystem.cpp in Sources */,
 				8ECB91A119FDE86A00613CE9 /* server.cpp in Sources */,
+				8E027E8A1A061C7F0021B53B /* recoveryClient.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

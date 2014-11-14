@@ -9,6 +9,8 @@
 #ifndef Server_server_h
 #define Server_server_h
 
+#include "filesystem.h"
+
 // Blocking calls to increase/decrease the available
 // connection semaphore offered by the server
 int decrease_connection_sem();
@@ -16,6 +18,9 @@ void post_connection_sem();
 Transaction *parseRequest(const char *request);
 
 
+char *getServerPort();
+
+char *getServerIP();
 
 
 #endif

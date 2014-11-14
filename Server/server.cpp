@@ -11,6 +11,7 @@
 #include "filesystem.h"
 #include <semaphore.h>
 #include "server.h"
+#include <signal.h>
 
 /*
  Steps:
@@ -39,11 +40,35 @@ pthread_mutex_t threadCountMutex;
 bool connectionAlreadyExists(char *message);
 bool checkValidTransactionID(char *message);
 
+typedef struct Arguments Arguments;
+struct Arguments {
+    char *ip;
+    char *port;
+};
+
+char serverip[20];
+char serverport[6];
+
+char *getServerPort() {
+    return serverport;
+}
+
+char *getServerIP() {
+    return serverip;
+}
+
+
+
+// catches broken pipes
+void catch_signal(int sig) {
+    printf("Caught bad signal: %d\n", sig);
+}
+
 
 
 /// Creates a server socket and listens for incoming connections to ip:port.
 /// This is a blocking call, so call it last!
-void setupServerSocket(const char *ip, const char* port) {
+void *setupServerSocket(void *arguments) {
     struct sockaddr_storage incomingAddr;
     struct addrinfo serverInfo;
     struct addrinfo *res;
@@ -53,16 +78,23 @@ void setupServerSocket(const char *ip, const char* port) {
     char portaddr[6];
     char incomingBuf[4096];
     
+    // Get args.
+    Arguments args = *(Arguments *)arguments;
+    
     // Initialize Server
-    if(ip == NULL) {
+    if(args.ip == NULL) {
         strlcpy(ipv4, "127.0.0.1", 20);
+        strlcpy(serverip, "127.0.0.1", 20);
     } else {
-        strlcpy(ipv4, ip, 20);
+        strlcpy(ipv4, args.ip, 20);
+        strlcpy(serverip, args.ip, 20);
     }
-    if(port == NULL) {
+    if(args.port == NULL) {
         strlcpy(portaddr, "8080", 6);
+        strlcpy(serverport, "8080", 6);
     } else {
-        strlcpy(portaddr, port, 6);
+        strlcpy(portaddr, args.port, 6);
+        strlcpy(serverport, args.port, 6);
     }
     
     // Setup socket
@@ -71,7 +103,7 @@ void setupServerSocket(const char *ip, const char* port) {
     serverInfo.ai_socktype = SOCK_STREAM;
     
     // Fill out socket information + ports
-    getaddrinfo(ip, port, &serverInfo, &res);
+    getaddrinfo(ipv4, serverport, &serverInfo, &res);
     
     // Create socket
     sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
@@ -111,6 +143,8 @@ void setupServerSocket(const char *ip, const char* port) {
             pthread_create(&threads[threadIndex], NULL, startNewTranscation, (void*)incomingSocket);
         }
     }
+    
+    return NULL;
 }
 
 int decrease_connection_sem() {
@@ -205,7 +239,6 @@ Transaction *parseRequest(const char *request) {
         
         strlcpy(txn->data, &tokens[4][0], txn->CONTENT_LEN+1);
     } else {
-        printf("No data in this message\n");
         txn->data = NULL;
         index = requestnew.find(delimeterNoData);
         tokens[3] = requestnew.substr(0, index);
@@ -230,56 +263,58 @@ Transaction *parseRequest(const char *request) {
     return txn;
 }
 
-void runTest() {
-     printf("\n\n********STARTING NEW TEST (write) ***********\n\n");
-    const char *sampleRequest = "NEW_TXN -1 0 6\r\n\r\nlegion";
-    const char *sampleRequest2 = "WRITE 0 1 8\r\n\r\nSuccess1";
-    const char *sampleRequest3 = "WRITE 0 2 8\r\n\r\nSuccess2";
-    const char *sampleRequest4 = "COMMIT 0 2 0\r\n\r\n\r\n";
-    Transaction *txn1 = parseRequest(sampleRequest);
-    Transaction *txn2 = parseRequest(sampleRequest2);
-    Transaction *txn3 = parseRequest(sampleRequest3);
-    Transaction *txn4 = parseRequest(sampleRequest4);
-    Transaction *array[] = {txn1, txn3, txn2, txn4};
-    //startFakeNewTranscation(array,4);
-    
-    //printf("\n\n********STARTING NEW TEST (read)***********\n\n");
-    
-    const char *sampleRequestd = "NEW_TXN -1 0 3\r\n\r\nbcd";
-    const char *sampleRequest2d = "READ 0 1 3\r\n\r\nbcd";
-    const char *sampleRequest3d = "COMMIT 0 1 0\r\n\r\n\r\n";
-    Transaction *txn1d = parseRequest(sampleRequestd);
-    Transaction *txn2d = parseRequest(sampleRequest2d);
-    Transaction *txn3d = parseRequest(sampleRequest3d);
-    Transaction *arrayd[] = {txn1d, txn2d, txn3d};
-    
-    //startFakeNewTranscation(arrayd, 3);
-    
-    printf("\n\n********STARTING NEW TEST (long write - unsorted)***********\n\n");
-    
-    const char *sampleRequestb = "NEW_TXN -1 0 6\r\n\r\ngarrus";
-    const char *sampleRequest2b = "WRITE 0 1 10\r\n\r\nSuccess1\n";
-    const char *sampleRequest3b = "WRITE 0 2 10\r\n\r\nSuccess2\n";
-    const char *sampleRequest4b = "WRITE 0 3 10\r\n\r\nSuccess3\n";
-    const char *sampleRequest5b = "WRITE 0 4 10\r\n\r\nSuccess4\n";
-    const char *sampleRequest6b = "WRITE 0 5 10\r\n\r\nSuccess5\n";
-    const char *sampleRequest7b = "WRITE 0 6 10\r\n\r\nSuccess6\n";
-    const char *sampleRequest8b = "WRITE 0 7 10\r\n\r\nSuccess7\n";
-    const char *sampleRequest9b = "COMMIT 0 7 0\r\n\r\n\r\n";
-    Transaction *txn1b = parseRequest(sampleRequestb);
-    Transaction *txn2b = parseRequest(sampleRequest2b);
-    Transaction *txn3b = parseRequest(sampleRequest3b);
-    Transaction *txn4b = parseRequest(sampleRequest4b);
-    Transaction *txn5b = parseRequest(sampleRequest5b);
-    Transaction *txn6b = parseRequest(sampleRequest6b);
-    Transaction *txn7b = parseRequest(sampleRequest7b);
-    Transaction *txn8b = parseRequest(sampleRequest8b);
-    Transaction *txn9b = parseRequest(sampleRequest9b);
-    Transaction *arrayb[] = {txn1b, txn8b, txn6b, txn7b, txn5b, txn2b, txn3b, txn4b, txn9b};
-    
-    startFakeNewTranscation(arrayb, 9);
-    
-}
+
+//
+//void runTest() {
+//     printf("\n\n********STARTING NEW TEST (write) ***********\n\n");
+//    const char *sampleRequest = "NEW_TXN -1 0 6\r\n\r\nlegion";
+//    const char *sampleRequest2 = "WRITE 0 1 8\r\n\r\nSuccess1";
+//    const char *sampleRequest3 = "WRITE 0 2 8\r\n\r\nSuccess2";
+//    const char *sampleRequest4 = "COMMIT 0 2 0\r\n\r\n\r\n";
+//    Transaction *txn1 = parseRequest(sampleRequest);
+//    Transaction *txn2 = parseRequest(sampleRequest2);
+//    Transaction *txn3 = parseRequest(sampleRequest3);
+//    Transaction *txn4 = parseRequest(sampleRequest4);
+//    Transaction *array[] = {txn1, txn3, txn2, txn4};
+//    //startFakeNewTranscation(array,4);
+//    
+//    //printf("\n\n********STARTING NEW TEST (read)***********\n\n");
+//    
+//    const char *sampleRequestd = "NEW_TXN -1 0 3\r\n\r\nbcd";
+//    const char *sampleRequest2d = "READ 0 1 3\r\n\r\nbcd";
+//    const char *sampleRequest3d = "COMMIT 0 1 0\r\n\r\n\r\n";
+//    Transaction *txn1d = parseRequest(sampleRequestd);
+//    Transaction *txn2d = parseRequest(sampleRequest2d);
+//    Transaction *txn3d = parseRequest(sampleRequest3d);
+//    Transaction *arrayd[] = {txn1d, txn2d, txn3d};
+//    
+//    //startFakeNewTranscation(arrayd, 3);
+//    
+//    printf("\n\n********STARTING NEW TEST (long write - unsorted)***********\n\n");
+//    
+//    const char *sampleRequestb = "NEW_TXN -1 0 6\r\n\r\ngarrus";
+//    const char *sampleRequest2b = "WRITE 0 1 10\r\n\r\nSuccess1\n";
+//    const char *sampleRequest3b = "WRITE 0 2 10\r\n\r\nSuccess2\n";
+//    const char *sampleRequest4b = "WRITE 0 3 10\r\n\r\nSuccess3\n";
+//    const char *sampleRequest5b = "WRITE 0 4 10\r\n\r\nSuccess4\n";
+//    const char *sampleRequest6b = "WRITE 0 5 10\r\n\r\nSuccess5\n";
+//    const char *sampleRequest7b = "WRITE 0 6 10\r\n\r\nSuccess6\n";
+//    const char *sampleRequest8b = "WRITE 0 7 10\r\n\r\nSuccess7\n";
+//    const char *sampleRequest9b = "COMMIT 0 7 0\r\n\r\n\r\n";
+//    Transaction *txn1b = parseRequest(sampleRequestb);
+//    Transaction *txn2b = parseRequest(sampleRequest2b);
+//    Transaction *txn3b = parseRequest(sampleRequest3b);
+//    Transaction *txn4b = parseRequest(sampleRequest4b);
+//    Transaction *txn5b = parseRequest(sampleRequest5b);
+//    Transaction *txn6b = parseRequest(sampleRequest6b);
+//    Transaction *txn7b = parseRequest(sampleRequest7b);
+//    Transaction *txn8b = parseRequest(sampleRequest8b);
+//    Transaction *txn9b = parseRequest(sampleRequest9b);
+//    Transaction *arrayb[] = {txn1b, txn8b, txn6b, txn7b, txn5b, txn2b, txn3b, txn4b, txn9b};
+//    
+//    startFakeNewTranscation(arrayb, 9);
+//    
+//}
 
 // Required to get the -dir argument! port and ip is optional
 // All arguments must be preceded by --
@@ -288,6 +323,8 @@ int main(int argc, char *argv[]) {
     char *dir = NULL;
     char *ip = NULL;
     char *port = NULL;
+    
+    
     
     /* -- Get command line arguments --*/
     static struct option options[] = {
@@ -321,11 +358,16 @@ int main(int argc, char *argv[]) {
     // Check to make sure we have dir as an argument
     if(dir == NULL) {
         printf("No directory argument found! Aborting\n");
+        return -1;
     }
     
+    if(port == NULL) {
+        port = (char*)"8080";
+    }
     
-    // Initialize the server
-    initializeFileSystem(dir, ip, port);
+    if(ip == NULL) {
+        ip= (char*)"127.0.0.1";
+    }
     
     // Run tests
     //runTest();
@@ -337,7 +379,27 @@ int main(int argc, char *argv[]) {
     
     // Create a socket + listner.
     // This thread is now listening from this call
-    setupServerSocket(ip, port);
+    
+    Arguments arguments;
+    arguments.ip = ip;
+    arguments.port = port;
+
+    
+    // Create server thread
+    pthread_t server;
+    pthread_t recoveryClient;
+    
+    
+    // Initialize File System
+    initializeFileSystem(dir, ip, port);
+    
+    pthread_create(&server, NULL, &setupServerSocket, (void *)&arguments);
+    pthread_create(&recoveryClient, NULL, &recoveryCheck, (void*)NULL);
+    
+    //signal(SIGPIPE, catch_signal);
+    
+    pthread_join(recoveryClient, NULL);
+    pthread_join(server, NULL);
     
     return 0;
     
