@@ -8,11 +8,12 @@
 #include <mutex>
 #include <arpa/inet.h>
 #include <getopt.h>
-#include "filesystem.h"
 #include <semaphore.h>
-#include "server.h"
 #include <signal.h>
+#include <cstring>
 
+
+#include "server.h"
 /*
  Steps:
  
@@ -33,7 +34,7 @@
 
 
 pthread_t       threads[32]; // MAX 32 Connections - otherwise hold
-sem_t           *threadSem;
+sem_t           threadSem;
 int             threadCount=32;
 pthread_mutex_t threadCountMutex;
 
@@ -83,19 +84,20 @@ void *setupServerSocket(void *arguments) {
     
     // Initialize Server
     if(args.ip == NULL) {
-        strlcpy(ipv4, "127.0.0.1", 20);
-        strlcpy(serverip, "127.0.0.1", 20);
+        strcpy(ipv4, "127.0.0.1");
+        strcpy(serverip, "127.0.0.1");
     } else {
-        strlcpy(ipv4, args.ip, 20);
-        strlcpy(serverip, args.ip, 20);
+        strcpy(ipv4, args.ip);
+        strcpy(serverip, args.ip);
     }
     if(args.port == NULL) {
-        strlcpy(portaddr, "8080", 6);
-        strlcpy(serverport, "8080", 6);
+        strcpy(portaddr, "8080");
+        strcpy(serverport, "8080");
     } else {
-        strlcpy(portaddr, args.port, 6);
-        strlcpy(serverport, args.port, 6);
+        strcpy(portaddr, args.port);
+        strcpy(serverport, args.port);
     }
+    
     
     // Setup socket
     memset(&serverInfo, 0, sizeof(serverInfo));
@@ -107,6 +109,10 @@ void *setupServerSocket(void *arguments) {
     
     // Create socket
     sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    
+    int option = 1;
+    setsockopt(sock, SOL_SOCKET,  SO_REUSEADDR, &option, sizeof option);
+    
     if(sock < 0) {
         printf("socket() failed\n");
         exit(-1);
@@ -127,19 +133,22 @@ void *setupServerSocket(void *arguments) {
     
     // Set the socket to listen
     listen(sock, MAX_CONNECTIONS);
-
+    
     addr_size = sizeof(incomingAddr);
     
     // Receive connections.
     while(1) {
-        int *incomingSocket = (int*)malloc(sizeof(*incomingSocket));
+        int *incomingSocket = (int*)calloc(1, sizeof(*incomingSocket));
+        
         *incomingSocket = accept(sock, (struct sockaddr *)&incomingAddr, &addr_size);
+        
         if(incomingSocket < 0) {
             printf("Error - could not resolve new socket!\n");
             free(incomingSocket);
         } else {
             printf("Forking off new thread!\n");
             int threadIndex = decrease_connection_sem();
+            
             pthread_create(&threads[threadIndex], NULL, startNewTranscation, (void*)incomingSocket);
         }
     }
@@ -148,8 +157,9 @@ void *setupServerSocket(void *arguments) {
 }
 
 int decrease_connection_sem() {
+    
     int threadIndex = -1;
-    sem_wait(threadSem);
+    sem_wait(&threadSem);
     
     // Critical section (I just like saying that :) )
     pthread_mutex_lock(&threadCountMutex);
@@ -161,7 +171,7 @@ int decrease_connection_sem() {
 }
 
 void post_connection_sem() {
-    sem_post(threadSem);
+    sem_post(&threadSem);
     pthread_mutex_lock(&threadCountMutex);
     threadCount++;
     pthread_mutex_unlock(&threadCountMutex);
@@ -181,7 +191,7 @@ bool checkValidTransactionID(char *message) {
     std::string         delimeterData = "\r\n\r\n";
     std::string         tokens[4];
     int                 maxID;
-
+    
     // Get the first 3 space delimited arguments
     for(int i =0; i <= 2; i++) {
         tokens[i] = requestnew.substr(0, requestnew.find(delimeter));
@@ -190,7 +200,7 @@ bool checkValidTransactionID(char *message) {
     
     txn.TRANSACTION_ID = atoi(&tokens[1][0]);
     maxID = getBiggestTransactionID();
-                                                  
+    
     if(strcmp(&tokens[0][0], "NEW_TXN") == 0) {
         return 0;
     }
@@ -206,7 +216,7 @@ bool checkValidTransactionID(char *message) {
 // Processes request header and puts into Transaction header
 // Returns a malloc'ed Transaction header - must free after use
 Transaction *parseRequest(const char *request) {
-    Transaction         *txn = (Transaction*) malloc(sizeof(Transaction));
+    Transaction         *txn = (Transaction*) calloc(1, sizeof(Transaction));
     std::string         requestnew = request;
     std::string         delimeter = " ";
     std::string         delimeterNoData = "\r\n\r\n\r\n";
@@ -235,29 +245,29 @@ Transaction *parseRequest(const char *request) {
         tokens[4] = requestnew;
         
         // malloc and copy over the string
-        txn->data = (char *)malloc((size_t)txn->CONTENT_LEN+1);
+        txn->data = (char *)calloc(1, (size_t)txn->CONTENT_LEN+1);
         
-        strlcpy(txn->data, &tokens[4][0], txn->CONTENT_LEN+1);
+        strcpy(txn->data, &tokens[4][0]);
     } else {
         txn->data = NULL;
         index = requestnew.find(delimeterNoData);
         tokens[3] = requestnew.substr(0, index);
     }
     if(strcmp(&tokens[0][0], "READ") == 0) {
-       txn->METHOD = READ;
+        txn->METHOD = READ;
     } else if(strcmp(&tokens[0][0], "NEW_TXN") == 0) {
-       txn->METHOD = NEW_TXN;
+        txn->METHOD = NEW_TXN;
     } else if(strcmp(&tokens[0][0], "WRITE")== 0) {
-       txn->METHOD = WRITE;
+        txn->METHOD = WRITE;
     } else if(strcmp(&tokens[0][0], "COMMIT")== 0) {
-       txn->METHOD = COMMIT;
+        txn->METHOD = COMMIT;
     } else if(strcmp(&tokens[0][0], "ABORT")== 0) {
-       txn->METHOD = ABORT;
+        txn->METHOD = ABORT;
     }
     
     size_t totalSize = strlen(request)+2;
-    txn->raw = (char*)malloc(totalSize);
-    strlcpy(txn->raw, request, totalSize);
+    txn->raw = (char*)calloc(1, totalSize);
+    strcpy(txn->raw, request);
     strcat(txn->raw, "\n");
     
     return txn;
@@ -277,9 +287,9 @@ Transaction *parseRequest(const char *request) {
 //    Transaction *txn4 = parseRequest(sampleRequest4);
 //    Transaction *array[] = {txn1, txn3, txn2, txn4};
 //    //startFakeNewTranscation(array,4);
-//    
+//
 //    //printf("\n\n********STARTING NEW TEST (read)***********\n\n");
-//    
+//
 //    const char *sampleRequestd = "NEW_TXN -1 0 3\r\n\r\nbcd";
 //    const char *sampleRequest2d = "READ 0 1 3\r\n\r\nbcd";
 //    const char *sampleRequest3d = "COMMIT 0 1 0\r\n\r\n\r\n";
@@ -287,11 +297,11 @@ Transaction *parseRequest(const char *request) {
 //    Transaction *txn2d = parseRequest(sampleRequest2d);
 //    Transaction *txn3d = parseRequest(sampleRequest3d);
 //    Transaction *arrayd[] = {txn1d, txn2d, txn3d};
-//    
+//
 //    //startFakeNewTranscation(arrayd, 3);
-//    
+//
 //    printf("\n\n********STARTING NEW TEST (long write - unsorted)***********\n\n");
-//    
+//
 //    const char *sampleRequestb = "NEW_TXN -1 0 6\r\n\r\ngarrus";
 //    const char *sampleRequest2b = "WRITE 0 1 10\r\n\r\nSuccess1\n";
 //    const char *sampleRequest3b = "WRITE 0 2 10\r\n\r\nSuccess2\n";
@@ -311,9 +321,9 @@ Transaction *parseRequest(const char *request) {
 //    Transaction *txn8b = parseRequest(sampleRequest8b);
 //    Transaction *txn9b = parseRequest(sampleRequest9b);
 //    Transaction *arrayb[] = {txn1b, txn8b, txn6b, txn7b, txn5b, txn2b, txn3b, txn4b, txn9b};
-//    
+//
 //    startFakeNewTranscation(arrayb, 9);
-//    
+//
 //}
 
 // Required to get the -dir argument! port and ip is optional
@@ -333,7 +343,7 @@ int main(int argc, char *argv[]) {
         {"dir", required_argument, NULL, 'd'},
         {NULL, 0, NULL, 0}
     };
-
+    
     while(1) {
         int c = getopt_long(argc, argv, "d:i:p:", options, NULL);
         
@@ -373,7 +383,7 @@ int main(int argc, char *argv[]) {
     //runTest();
     
     // Initialize semaphore & mutexes
-    threadSem = sem_open("threadsem", 32);
+    sem_init(&threadSem,0, 32);
     pthread_mutex_init(&threadCountMutex, NULL);
     
     
@@ -383,7 +393,7 @@ int main(int argc, char *argv[]) {
     Arguments arguments;
     arguments.ip = ip;
     arguments.port = port;
-
+    
     
     // Create server thread
     pthread_t server;
@@ -396,7 +406,7 @@ int main(int argc, char *argv[]) {
     pthread_create(&server, NULL, &setupServerSocket, (void *)&arguments);
     pthread_create(&recoveryClient, NULL, &recoveryCheck, (void*)NULL);
     
-    //signal(SIGPIPE, catch_signal);
+    signal(SIGPIPE, catch_signal);
     
     pthread_join(recoveryClient, NULL);
     pthread_join(server, NULL);

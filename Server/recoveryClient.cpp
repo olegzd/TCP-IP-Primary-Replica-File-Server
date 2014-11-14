@@ -6,7 +6,7 @@
 //  Copyright (c) 2014 Oleg Zdornyy. All rights reserved.
 //
 
-#include "recoveryClient.h"
+
 #include <sys/socket.h>
 #include <string.h>
 #include <string>
@@ -19,7 +19,7 @@
 #include <queue>
 #include <map>
 
-#include "filesystem.h"
+#include "recoveryClient.h"
 #include "server.h"
 
 /*
@@ -27,26 +27,29 @@
  */
 
 void *recoveryClient(void *transactions) {
+    struct sockaddr_storage incomingAddr;
     struct addrinfo serverInfo;
     struct addrinfo *res;
+    socklen_t addr_size;
     int sock;
+    int sockfd;
     char ipv4[20];
     char portaddr[6];
-
+    
     std::map<int, std::queue<Transaction *> > transactionHash = *(std::map<int, std::queue<Transaction *> >*) transactions;
     typedef std::map<int, std::queue<Transaction *> >::iterator transactionIterator;
     
     pthread_t respawnThreads[transactionHash.size()];
     
     if(transactionHash.size() <= 0) { // No need to recover
-        printf("No log file - skipping recovery\n");
+        printf("No uncommited logs - skipping recovery\n");
         return NULL;
     }
-
+    
     // Initialize Client
-    strlcpy(ipv4, getServerIP(), 20);
-    strlcpy(portaddr, getServerPort(), 6);
-
+    strcpy(ipv4, getServerIP());
+    strcpy(portaddr, getServerPort());
+    
     // Setup socket
     memset(&serverInfo, 0, sizeof(serverInfo));
     serverInfo.ai_family = AF_INET;
@@ -72,7 +75,7 @@ void *recoveryClient(void *transactions) {
     addr.s_addr = ((struct sockaddr_in *)(res->ai_addr))->sin_addr.s_addr;
     freeaddrinfo(res);
     
-   // sleep(3); // Sleep for 200 milliseconds to give the main server loop time to init.
+    sleep(0.2); // Sleep for 1 milliseconds to give the main server loop time to init.
     
     connect(sock, res->ai_addr, res->ai_addrlen);
     
@@ -80,27 +83,26 @@ void *recoveryClient(void *transactions) {
     printf("Loop pre-entry\n");
     int currentTransactionIndex = 0;
     
+    printf("Running recovery\n");
+    
     while( it != transactionHash.end() ) {
         
+        size_t qsize = it->second.size();
         pthread_create(&respawnThreads[currentTransactionIndex], NULL, startNewTranscation, (void*)&sock);
         
+        sleep(0.3);
+        size_t sent = send(sock, it->second.front()->raw, strlen(it->second.front()->raw), 0);
         
-        sleep(0.1);
         
+        free(it->second.front()->raw);
+        free(it->second.front()->data);
+        it->second.pop();
         
-        // Iterate through this transaction queue
-        int queueSize = it->second.size();
-        for(int i =0; i < queueSize; i++) {
-            printf("SENDING OFF: %s\n", it->second.front()->raw);
-            send(sock, it->second.front()->raw, strlen(it->second.front()->raw), 0);
-            sleep(0.5);
-            free(it->second.front()->raw);
-            free(it->second.front()->data);
-            it->second.pop();
-        }
         
         currentTransactionIndex++;
         it ++;
+        
+        
     }
     
     close(sock);
