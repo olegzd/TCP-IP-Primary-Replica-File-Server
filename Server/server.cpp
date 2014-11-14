@@ -274,58 +274,6 @@ Transaction *parseRequest(const char *request) {
 }
 
 
-//
-//void runTest() {
-//     printf("\n\n********STARTING NEW TEST (write) ***********\n\n");
-//    const char *sampleRequest = "NEW_TXN -1 0 6\r\n\r\nlegion";
-//    const char *sampleRequest2 = "WRITE 0 1 8\r\n\r\nSuccess1";
-//    const char *sampleRequest3 = "WRITE 0 2 8\r\n\r\nSuccess2";
-//    const char *sampleRequest4 = "COMMIT 0 2 0\r\n\r\n\r\n";
-//    Transaction *txn1 = parseRequest(sampleRequest);
-//    Transaction *txn2 = parseRequest(sampleRequest2);
-//    Transaction *txn3 = parseRequest(sampleRequest3);
-//    Transaction *txn4 = parseRequest(sampleRequest4);
-//    Transaction *array[] = {txn1, txn3, txn2, txn4};
-//    //startFakeNewTranscation(array,4);
-//
-//    //printf("\n\n********STARTING NEW TEST (read)***********\n\n");
-//
-//    const char *sampleRequestd = "NEW_TXN -1 0 3\r\n\r\nbcd";
-//    const char *sampleRequest2d = "READ 0 1 3\r\n\r\nbcd";
-//    const char *sampleRequest3d = "COMMIT 0 1 0\r\n\r\n\r\n";
-//    Transaction *txn1d = parseRequest(sampleRequestd);
-//    Transaction *txn2d = parseRequest(sampleRequest2d);
-//    Transaction *txn3d = parseRequest(sampleRequest3d);
-//    Transaction *arrayd[] = {txn1d, txn2d, txn3d};
-//
-//    //startFakeNewTranscation(arrayd, 3);
-//
-//    printf("\n\n********STARTING NEW TEST (long write - unsorted)***********\n\n");
-//
-//    const char *sampleRequestb = "NEW_TXN -1 0 6\r\n\r\ngarrus";
-//    const char *sampleRequest2b = "WRITE 0 1 10\r\n\r\nSuccess1\n";
-//    const char *sampleRequest3b = "WRITE 0 2 10\r\n\r\nSuccess2\n";
-//    const char *sampleRequest4b = "WRITE 0 3 10\r\n\r\nSuccess3\n";
-//    const char *sampleRequest5b = "WRITE 0 4 10\r\n\r\nSuccess4\n";
-//    const char *sampleRequest6b = "WRITE 0 5 10\r\n\r\nSuccess5\n";
-//    const char *sampleRequest7b = "WRITE 0 6 10\r\n\r\nSuccess6\n";
-//    const char *sampleRequest8b = "WRITE 0 7 10\r\n\r\nSuccess7\n";
-//    const char *sampleRequest9b = "COMMIT 0 7 0\r\n\r\n\r\n";
-//    Transaction *txn1b = parseRequest(sampleRequestb);
-//    Transaction *txn2b = parseRequest(sampleRequest2b);
-//    Transaction *txn3b = parseRequest(sampleRequest3b);
-//    Transaction *txn4b = parseRequest(sampleRequest4b);
-//    Transaction *txn5b = parseRequest(sampleRequest5b);
-//    Transaction *txn6b = parseRequest(sampleRequest6b);
-//    Transaction *txn7b = parseRequest(sampleRequest7b);
-//    Transaction *txn8b = parseRequest(sampleRequest8b);
-//    Transaction *txn9b = parseRequest(sampleRequest9b);
-//    Transaction *arrayb[] = {txn1b, txn8b, txn6b, txn7b, txn5b, txn2b, txn3b, txn4b, txn9b};
-//
-//    startFakeNewTranscation(arrayb, 9);
-//
-//}
-
 // Required to get the -dir argument! port and ip is optional
 // All arguments must be preceded by --
 // (eg --dir /dir/dir)

@@ -27,7 +27,6 @@
 #include <mutex>
 #include <sys/socket.h>
 #include <map>
-#include "recoveryClient.h"
 #include "server.h"
 
 #define LOG_FILE_NAME ".log"
@@ -76,9 +75,10 @@ void *recoveryCheck( void *args ) {
     sprintf(filePath, "%s%s", directory, "/.log");
     std::string temp(".log");
     int messageCount = 0;
+    int maxTransactionID = 0;
     if(fileHash.count(temp) >0 ) {
         //
-        // Insert recovery functionality here
+        // Read in .log file
         //
         logFile = fopen(filePath, "a+");
         fseek(logFile, 0, SEEK_END);        // Get end of file
@@ -118,19 +118,15 @@ void *recoveryCheck( void *args ) {
             ftruncate(fileno(logFile), secondaryIndex);
         }
         
-        
-        // Convert strings into Tranasction structs.
-        // Add structs to hash, indexed by transaction id.
-        // If any of structs is commit or abort, remove it.
-        
         messageCount = messages.size();
-        int maxTransactionID = 0;
-        
+        // Loop through text messages and the latest transaction id's
         for(int message = 0; message < messageCount; message++) {
             
-            Transaction *reference = parseRequest( messages.front().c_str() );
+            Transaction *reference;
+            reference = parseRequest( messages.front().c_str());
             messages.pop();
             
+            // Set new transaction id - doesn't matter if we overshoot, they are our own version of UUID's
             if( reference->TRANSACTION_ID > maxTransactionID) maxTransactionID = reference->TRANSACTION_ID;
             
             transactionHash[reference->TRANSACTION_ID].push(reference); // Push into hash (so we have at least one variable)
@@ -139,7 +135,7 @@ void *recoveryCheck( void *args ) {
             if( (reference->METHOD == ABORT) || (reference->METHOD == COMMIT ) ) {
                 transactionHash.erase(reference->TRANSACTION_ID);
             }
-            
+            free(reference);
         }
         
         // Connect, send, and disconnect.
@@ -150,10 +146,6 @@ void *recoveryCheck( void *args ) {
         // Don't worry about critical section - it won't be competing for anything before we finish this call.
         lastTransactionId = maxTransactionID;
         
-        pthread_t recoveryThread;
-        pthread_create(&recoveryThread, NULL, recoveryClient, (void*)&transactionHash);
-        pthread_join(recoveryThread, NULL);
-        
     } else { // Create new .log file in this directory
         pthread_mutex_init(&fileHash[LOG_FILE_NAME], NULL);
         logFile = fopen(filePath, "w+");
@@ -163,8 +155,9 @@ void *recoveryCheck( void *args ) {
 }
 
 /*
- *
- *
+ * Initializes the file system.
+ * Sets up the log, id hash, and condition signalling mutexes.
+ * Goes through directory and checks all existing files
  */
 void initializeFileSystem(const char* fullPath, char *ip, char * port) {
     DIR         *dir;
@@ -273,7 +266,6 @@ void requestMissingMessages(std::queue<int> missingMessages, const char *ip, con
 
 /* Sorts the messages into a queue with NEW_TXN at the top and COMMIT last
  *
- * If time permits, optimize this as it's a 3*n + n^2 beast of a sorting function
  */
 std::queue<Transaction *> sortMessages(std::queue<Transaction *> transactions) {
     size_t count = transactions.size();
@@ -330,17 +322,16 @@ std::queue<Transaction *> sortMessages(std::queue<Transaction *> transactions) {
  *
  */
 void writeMessageToLog( Transaction *tx ) {
-    // Sometimes, the raw data doesn't have the new
-    // Transaction IDs
-    
+    int tid;
+    unsigned long startOfID;
+    unsigned long endOfID;
     std::string raw (tx->raw);
     std::string del(" ");
     
-    int startOfID = raw.find(del); // Find method
-    int endOfID = raw.find(del, startOfID+1); // Skip first space
-    
     // Get the ID
-    int tid = atoi( raw.substr(startOfID, endOfID).c_str() );
+    startOfID = raw.find(del); // Find method
+    endOfID = raw.find(del, startOfID+1); // Skip first space
+    tid = atoi( raw.substr(startOfID, endOfID).c_str() );
     
     char newId[256];
     sprintf(newId, " %i", tx->TRANSACTION_ID);
@@ -348,8 +339,6 @@ void writeMessageToLog( Transaction *tx ) {
     if( tid != tx->TRANSACTION_ID ) {
         raw.replace(startOfID, raw.substr(startOfID, endOfID-startOfID).length(), newId );
     }
-    
-    
     
     pthread_mutex_lock(&log_mutex);
     
@@ -379,7 +368,7 @@ void writeToDisk(std::queue<Transaction *> messages) {
     sprintf(filePath, "%s/%s", directory, fname.c_str());
     file = fopen(filePath, "a+");
     printf("File path is %s\n", filePath);
-    printf("Number of writes %i\n", count-2);
+    printf("Number of writes %lu\n", count-2);
     
     // Get transaction
     Transaction *temp = messages.front();
@@ -388,7 +377,7 @@ void writeToDisk(std::queue<Transaction *> messages) {
     
     // Write to file excluding the first and last parts of the array
     for(int i =1; i < count-2; i++) {
-        Transaction *toFree = messages.front(); printf("Writing part %i of %i to file: %s\n", i, (count-2), toFree->data);
+        Transaction *toFree = messages.front(); printf("Writing part %i of %lu to file: %s\n", i, (count-2), toFree->data);
         fprintf(file, "%s", toFree->data);
         messages.pop();
     }
@@ -410,9 +399,6 @@ void writeToDisk(std::queue<Transaction *> messages) {
     pthread_mutex_unlock(&fileHash[fname]);
     
 }
-
-
-
 
 /*
  * Read a file from directory/filename.
@@ -497,100 +483,9 @@ void writeToFile(char *fileName, char *data, size_t len) {
 }
 
 /*
- *
  * Fake new Transaction dealing mechanisms - will eventually be a threaded mechanism
- *
- */
-//void startFakeNewTranscation(Transaction *tx[], int count) {
-//    std::queue<Transaction*> transactions; // HOLDS THE TRANSACTIONS (IN RAM & WRITES OUT)
-//    int             transactionId;
-//    char            *filename = NULL;
-//    std::queue<int> missing;
-//    int TRANSACTION_METHOD = -1;
-//
-//    // Replace with a listening mechanism
-//    for(int i = 0; i < count; i++) {
-//        switch (tx[i]->METHOD) {
-//            case NEW_TXN:
-//
-//                printf("Starting new transaction\n");
-//                transactionId = getNewTransactionID();
-//                filename = tx[i]->data;
-//
-//                if(filename == NULL) {
-//                    printf("No filename!\n");
-//                    return;
-//                }
-//
-//                transactions.push(tx[i]);
-//                writeMessageToLog(tx[i]);
-//                break;
-//            case READ:
-//                writeMessageToLog(tx[i]);
-//                TRANSACTION_METHOD = READ;
-//                break;
-//            case WRITE:
-//                transactions.push(tx[i]);
-//                writeMessageToLog(tx[i]);
-//                TRANSACTION_METHOD = WRITE;
-//                break;
-//            case COMMIT:
-//                transactions.push(tx[i]);
-//                missing = checkMissingSequences(transactions);
-//                if(missing.size() > 0) {
-//                    // run algorithm get missing sequences
-//                    printf("We're missing sequences!\n");
-//                    return;
-//                } else {
-//                    transactions = sortMessages(transactions);
-//                    writeMessageToLog(tx[i]);
-//                }
-//                break;
-//            case ABORT:
-//                writeMessageToLog(tx[i]);
-//                printf("Transaction aborted\n");
-//                goto CLEANUP;
-//            default:
-//                printf("Invalid Transaction\n");
-//                return;
-//        }
-//
-//    }
-//
-//    if (TRANSACTION_METHOD == WRITE) {
-//        writeToDisk(transactions);
-//        return;
-//    }
-//    if (TRANSACTION_METHOD == READ) {
-//        char *readin = readFile(filename);
-//        printf("READING: %s\n", readin);
-//        goto CLEANUP;
-//    }
-//CLEANUP:
-//    for(int i=0; i <transactions.size(); i++) {
-//        Transaction *temp = transactions.front();
-//        transactions.pop();
-//
-//        if(temp->data != NULL) {
-//            free(temp->data);
-//        }
-//        free(temp->raw);
-//        free(temp);
-//    }
-//}
-
-
-
-
-/*
- *
- * Fake new Transaction dealing mechanisms - will eventually be a threaded mechanism
- *
  */
 void *startNewTranscation(void *socketfd) {
-    
-    
-    // Transaction and stability.
     std::queue<Transaction*> transactions;
     int                 transactionId = -2000;
     char                *filename = NULL;
@@ -604,7 +499,6 @@ void *startNewTranscation(void *socketfd) {
     // Current socket.
     int                 socket = *(int*)socketfd;
     
-    
     while(1) {
         Transaction *tx;
         ssize_t     incoming;
@@ -616,11 +510,11 @@ void *startNewTranscation(void *socketfd) {
         memset(reply, 0, OUTPUT_BUFFER_LEN);
         
         // Get data from client byte by byte.
-        while( ((incoming = recv(socket, data + index, 1, 0) ) > 0) && (index < (len-1))) {
+        while( ((incoming = recv(socket, data + index, 1, 0) ) > 0) ) {
             index++;
             if( (strstr(data, "\r\n\r\n\r\n")) != NULL) { // No Data
                 break;
-            } else if( (strstr(data, "\r\n\r\n") != NULL) && (dataFlag != true)) { // Data
+            } else if( (strstr(data, "\r\n\r\n") != NULL) && (dataFlag == false)) { // Data
                 std::string         delimeterData = "\r\n\r\n";
                 std::string         tokens[4];
                 std::string         dataSoFar(data);
@@ -646,14 +540,19 @@ void *startNewTranscation(void *socketfd) {
                 
                 len = datalen + index;
                 dataFlag = true;
+            } else if( (dataFlag == true) && (index > (len-1))) {
+                index = 0;
+                dataFlag=false;
+                break;
             }
         }
         
         tx = parseRequest(data);
+        memset(data, 0, INCOMING_BUFFER_LEN);
+        printf("Processing data: %s\n", tx->data);
         
         // If connection closed, GOTO MONITOR.
         if(incoming == 0) {
-            
             if( (dataFlag == true) && (tx->data == NULL) ) {
                 snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %zu %s", "ERROR", transactionId, 0, 204, strlen("Missing filename"), "\r\n\r\nMissing filename");
                 send(socket, reply, strlen(reply), 0);
@@ -663,8 +562,6 @@ void *startNewTranscation(void *socketfd) {
                 goto MONITOR;
             }
         }
-        
-        
         
         // Check if this message is meant for a different transaction
         if(transactionId == -2000) {                                    // Brand new thread?
@@ -691,7 +588,7 @@ void *startNewTranscation(void *socketfd) {
         
         // Check for valid transaction ID.
         // Skip this message and go back to recv() if invalid.
-        if(transactionId != -2000) {                                                    // Are we a new thread?
+        if(transactionId != -2000) {                                                                                    // Are we a new thread?
             if( (tx->TRANSACTION_ID != transactionId) && ( (tx->METHOD != NEW_TXN) || (tx->METHOD != READ) )  ) {    // If not, is this a new transaction or is this a valid id?
                 // Send ERROR back to server.
                 snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ERROR", transactionId, 0, 201, 0, "\r\n\r\nInvalid TXN ID");
@@ -761,6 +658,14 @@ void *startNewTranscation(void *socketfd) {
                 
                 goto CLEANUP;
             case WRITE:                                           // Write
+                
+                if(tx->SEQUENCE_NUMBER <= 0) {  // Sequence with a bad sequence number?
+                    snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %zu %s", "ERROR", transactionId, 0, 204, strlen("Invalid sequence"), "\r\n\r\nInvalid sequence");
+                    send(socket, reply, strlen(reply), 0);
+                    free(tx);
+                    continue;
+                }
+                
                 printf("\nProcessing Method: WRITE\n");
                 // Write to log.
                 writeMessageToLog(tx);
@@ -775,9 +680,6 @@ void *startNewTranscation(void *socketfd) {
                 continue;
             case COMMIT:                                           // Commit
                 printf("\nProcessing Method: COMMIT\n");
-                
-                
-                
                 // Check for missing sequences - don't write to RAM or LOG if invalid
                 missing = checkMissingSequences(transactions, tx->SEQUENCE_NUMBER);
                 if(missing.size() > 0) {
