@@ -12,7 +12,7 @@ EXAMPLE To initiate a primary server that will write out info for replicas and c
 ./server -i 127.0.0.1 -p 8080 -d ~/Documents/testfs -n ~/Documents/primary.txt -t primary
 
 EXAMPLE To initiate a replica server that checks the primary.txt file the server above uses
-./server -i 127.0.0.1 -p 8000 -d ~Documents/testfsbak -n ~/Documents/primary.txt -t replica
+./server -i 127.0.0.1 -p 8000 -d ~/Documents/testfsbak -n ~/Documents/primary.txt -t replica
 
 -i : ip address you'd like this server to operate as (exits if unable to bind) - binds to 127.0.0.1 if not included (OPTIONAL)
 -p : port you'd like this server to use. DO NOT USE PORT 3000 as this is what primary uses to communicate with its replica - uses 8080 (OPTIONAL)
