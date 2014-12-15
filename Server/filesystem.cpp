@@ -6,8 +6,9 @@
 //  Copyright (c) 2014 Oleg Zdornyy. All rights reserved.
 //
 
+#include "utilities.h"
 #include "filesystem.h"
-
+#include <netdb.h>
 #include <algorithm> // sort
 #include <stdio.h>
 #include <vector>
@@ -27,6 +28,7 @@
 #include <mutex>
 #include <sys/socket.h>
 #include <map>
+#include <sys/un.h>
 #include "server.h"
 
 #define LOG_FILE_NAME ".log"
@@ -47,6 +49,8 @@ pthread_mutex_t                     log_mutex;
 int                                 lastTransactionId=0;
 FILE                                *logFile;
 
+void writeToFile(const char *fileName, const char *data, size_t len);
+
 /*
  * Global variables.
  *
@@ -55,13 +59,15 @@ FILE                                *logFile;
 std::map<int, pthread_cond_t>    conditionVars; // Used to signal a thread with TRANSACTION_ID (int)
 pthread_mutex_t                  conditionsMutex; // Mutex that must be locked to access reconnectedSocket
 std::map<int, Transaction*>      reconnectedSocket; // Holds the latest Transaction struct it got
+int replicaSocket = -1;
 
-/*
- * Method pre-declarations
- *
- */
-void startFakeNewTranscation(Transaction [], int dataLen);
+void setReplicaSocket(int socketfd) {
+    replicaSocket = socketfd;
+}
 
+char *getFileSystemPath() {
+    return directory;
+}
 
 void *recoveryCheck( void *args ) {
     //
@@ -71,11 +77,15 @@ void *recoveryCheck( void *args ) {
     // Create a new one.
     //
     //
-    char filePath[sizeof(directory) + sizeof("./log") +1]; // +1 for EOF
+    char filePath[sizeof(directory) + sizeof("/.log") +1]; // +1 for EOF
     sprintf(filePath, "%s%s", directory, "/.log");
     std::string temp(".log");
-    int messageCount = 0;
+    long messageCount = 0;
     int maxTransactionID = 0;
+    if(fileHash.count(REPLICA_LOG_FILE_NAME) <= 0) {
+        pthread_mutex_init(&fileHash[REPLICA_LOG_FILE_NAME], NULL);
+    }
+    
     if(fileHash.count(temp) >0 ) {
         //
         // Read in .log file
@@ -139,8 +149,7 @@ void *recoveryCheck( void *args ) {
         }
         
         // Connect, send, and disconnect.
-        transactionIterator it =  transactionHash.begin();
-        
+
         free(filebuffer);
         
         // Don't worry about critical section - it won't be competing for anything before we finish this call.
@@ -150,6 +159,8 @@ void *recoveryCheck( void *args ) {
         pthread_mutex_init(&fileHash[LOG_FILE_NAME], NULL);
         logFile = fopen(filePath, "w+");
     }
+    
+    
     
     return NULL;
 }
@@ -170,6 +181,12 @@ void initializeFileSystem(const char* fullPath, char *ip, char * port) {
     pthread_mutex_init(&log_mutex, NULL);
     pthread_mutex_init(&conditionsMutex, NULL);
     
+    // Check if DIR exists
+    if (dir == NULL) {
+        printf("File system directory doesn't exist!. Aborting\n");
+        exit(-1);
+    }
+    
     //
     //
     // Check what files exist and add them to the hash table.
@@ -179,10 +196,8 @@ void initializeFileSystem(const char* fullPath, char *ip, char * port) {
     //
     while( (file = readdir(dir)) != NULL) {
         // Don't bother with . or .. files
-        if( strncmp(file->d_name, "..", sizeof("..")) && strncmp(file->d_name, ".", sizeof(".")) ) {
-            std::string temp(file->d_name);
-            pthread_mutex_init(&fileHash[temp], NULL);
-        }
+        std::string temp(file->d_name);
+        pthread_mutex_init(&fileHash[temp], NULL);
     }
     closedir(dir);
     
@@ -206,10 +221,6 @@ int getNewTransactionID() {
     return id;
 }
 
-/* Get latest transaction ID
- *
- *
- */
 int getBiggestTransactionID() {
     int id = -1;
     
@@ -257,67 +268,6 @@ std::queue<int> checkMissingSequences( std::queue<Transaction *> transactions, i
 
 /*
  *
- *
- */
-void requestMissingMessages(std::queue<int> missingMessages, const char *ip, const char *port) {
-    
-}
-
-
-/* Sorts the messages into a queue with NEW_TXN at the top and COMMIT last
- *
- */
-std::queue<Transaction *> sortMessages(std::queue<Transaction *> transactions) {
-    size_t count = transactions.size();
-    std::queue<Transaction *> returnQ;
-    Transaction *temp[count];
-    
-    if(count == 0) {
-        return transactions;
-    }
-    
-    // Put all messages into array
-    for(int i=(int)count-1; i >= 0; i--) {
-        temp[i] = transactions.front();
-        transactions.pop();
-    }
-    
-    // Put the NEW_TXN into position 0, COMMIT in last position
-    for(int i=0; i<count; i++) {
-        if( (temp[i]->METHOD == NEW_TXN)  || (temp[i]->METHOD == COMMIT) ) {
-            if(temp[i]->METHOD == NEW_TXN) {
-                Transaction *x = temp[0];
-                temp[0] = temp[i];
-                temp[i] = x;
-            } else if(temp[i]->METHOD == COMMIT) {
-                Transaction *x = temp[count -1];
-                temp[count -1 ] = temp[i];
-                temp[i] = x;
-            }
-        }
-    }
-    
-    // Sort the rest of the array (quadratic time)
-    for(int i=1; i<count-2; i++) {
-        for(int j=i+1; j<=count-2; j++) {
-            if(temp[i]->SEQUENCE_NUMBER > temp[j]->SEQUENCE_NUMBER) {
-                Transaction *swap = temp[i];
-                temp[i] = temp[j];
-                temp[j] = swap;
-            }
-        }
-    }
-    
-    // Put back into new queue
-    for(int i=0; i<count; i++) {
-        returnQ.push(temp[i]);
-    }
-    
-    return returnQ;
-}
-
-/*
- *
  * Writes the transaction to log
  *
  */
@@ -350,10 +300,21 @@ void writeMessageToLog( Transaction *tx ) {
     
 }
 
+/*
+ * Writes messages to log and messages replica (if it exists) with file to write and data.
+ *
+ */
 void writeToDisk(std::queue<Transaction *> messages) {
     FILE *file;
     std::string fname(messages.front()->data);
-    size_t count = messages.size();
+    size_t count;
+    int bytesWritten = 0;
+    std::string written;
+    std::string replicaPayload;
+    int transactionID = -1;
+    
+    // Set written data
+    replicaPayload.append(fname);
     
     // Get lock for file. First, check if it exists
     if(fileHash.count(fname) <= 0) {
@@ -368,37 +329,89 @@ void writeToDisk(std::queue<Transaction *> messages) {
     sprintf(filePath, "%s/%s", directory, fname.c_str());
     file = fopen(filePath, "a+");
     printf("File path is %s\n", filePath);
-    printf("Number of writes %lu\n", count-2);
     
-    // Get transaction
+    // Get transaction and free header (NEW_TXN)
     Transaction *temp = messages.front();
-    messages.pop();
-    free(temp);
-    
-    // Write to file excluding the first and last parts of the array
-    for(int i =1; i < count-2; i++) {
-        Transaction *toFree = messages.front(); printf("Writing part %i of %lu to file: %s\n", i, (count-2), toFree->data);
-        fprintf(file, "%s", toFree->data);
+    if(temp->METHOD == NEW_TXN) {
+        transactionID = temp->TRANSACTION_ID;
         messages.pop();
+        free(temp);
     }
     
+    count = messages.size();
+    
+    // Write to file excluding the first and last parts of the array
+    for(int i=0; i < count; i++) {
+        Transaction *toFree = messages.front();
+        
+        
+        // Check if it's the COMMIT message
+        if(toFree->METHOD == COMMIT) {
+            if(toFree->raw != NULL) {
+                free(toFree->raw);
+            }
+            break;
+        }
+        printf("Writing part %i of %lu to file: %s\n", i+1, count-1, toFree->data);
+        fprintf(file, "%s", toFree->data);
+        
+        // Replica houselogging
+        written.append(toFree->data);
+        bytesWritten += strlen(toFree->data);
+        
+        messages.pop();
+    }
+    // Message for backup
+    char ID[64];
+    sprintf(ID, " %i ", transactionID);
+    
+    replicaPayload.append(ID);
+    replicaPayload.append(written);
+    replicaPayload.append("FIN");
+   
     // Force flush to disk & close.
     fflush(file);
     fflush(file);
     fclose(file);
     
-    // Free commit message
-    temp = messages.front();
-    if(temp->data != NULL) {
-        free(temp->data);
-    }
-    
-    
-    free(temp->raw);
-    
     pthread_mutex_unlock(&fileHash[fname]);
     
+    
+    printf("Trying to send  %s to replica.\n", replicaPayload.c_str());
+    // Try to message replica with data to write
+    if( replicaSocket >= 0 ) {
+        // Check if socket is ready for writing
+        send(replicaSocket, "READY", strlen("READY"), 0);
+        char temp[32];
+        long err = recv(replicaSocket, temp, 32, 0);
+        
+        if(err <= 0) {
+            writeToFile(REPLICA_LOG_FILE_NAME, replicaPayload.c_str(), replicaPayload.size());
+            printf("Socket conection closed! Will listen for one to come online.\n");
+            pthread_t reacher;
+            pthread_create(&reacher, NULL, replicaReacher, NULL);
+            pthread_join(reacher, NULL);
+            return;
+        }
+        
+        if(send(replicaSocket, replicaPayload.c_str(), replicaPayload.size(), 0) <= 0)  {
+            replicaSocket = -1;
+            printf("Unable to reach replica. Either none connected, or it's crashed\n");
+            writeToFile(REPLICA_LOG_FILE_NAME, replicaPayload.c_str(), replicaPayload.size());
+            
+            pthread_t reacher;
+            pthread_create(&reacher, NULL, replicaReacher, NULL);
+            pthread_join(reacher, NULL);
+        }
+    } else {
+        printf("Replica socket not initialized!\n");
+        writeToFile(REPLICA_LOG_FILE_NAME, replicaPayload.c_str(), replicaPayload.size());
+        pthread_t reacher;
+        pthread_create(&reacher, NULL, replicaReacher, NULL);
+        pthread_join(reacher, NULL);
+    }
 }
+
 
 /*
  * Read a file from directory/filename.
@@ -454,16 +467,17 @@ char *readFile(char *fileName) {
 }
 
 // writes len characters of data to fileName in directory
-void writeToFile(char *fileName, char *data, size_t len) {
+void writeToFile(const char *fileName, const char *data, size_t len) {
     char path[350];
     FILE *file;
     
     sprintf(path, "%s/%s",directory,fileName);
     
+    printf("WRITING TO FILE %zu bytes: %s\n",len, path);
     // Get the lock on the file
     pthread_mutex_lock(&fileHash[fileName]);
     
-    // Open file with append set as its mode
+    // Open file with appen d set as its mode
     file = fopen(path, "a");
     if(file == NULL) {
         printf("Error opening file \"%s\" . %s\n", path, strerror(errno));
@@ -477,15 +491,16 @@ void writeToFile(char *fileName, char *data, size_t len) {
         pthread_mutex_unlock(&fileHash[fileName]);
         return;
     }
-    
-    printf("Successfully written to file - insert ack return here\n");
+    fflush(file);
+    fclose(file);
     pthread_mutex_unlock(&fileHash[fileName]);
 }
 
+
 /*
- * Fake new Transaction dealing mechanisms - will eventually be a threaded mechanism
+ * Networked transaction thread - primary forks these threads to reply back to client
  */
-void *startNewTranscation(void *socketfd) {
+void *PRIMARY_startNewTranscation(void *socketfd) {
     std::queue<Transaction*> transactions;
     int                 transactionId = -2000;
     char                *filename = NULL;
@@ -498,7 +513,7 @@ void *startNewTranscation(void *socketfd) {
     
     // Current socket.
     int                 socket = *(int*)socketfd;
-    
+
     while(1) {
         Transaction *tx;
         ssize_t     incoming;
@@ -549,7 +564,6 @@ void *startNewTranscation(void *socketfd) {
         
         tx = parseRequest(data);
         memset(data, 0, INCOMING_BUFFER_LEN);
-        printf("Processing data: %s\n", tx->data);
         
         // If connection closed, GOTO MONITOR.
         if(incoming == 0) {
@@ -567,10 +581,17 @@ void *startNewTranscation(void *socketfd) {
         if(transactionId == -2000) {                                    // Brand new thread?
             if((tx->METHOD != NEW_TXN) && (tx->METHOD != READ)) {                                 // New transaction?
                 if(transactionAllowed[tx->TRANSACTION_ID] == false) {   // Is it registered with our server?
-                    snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ERROR", transactionId, 0, 201, 0, "\r\n\r\nINVALID TXN ID"); // This is the client's error, send message back
-                    send(socket, reply, strlen(reply), 0);
+                    if((tx->METHOD == COMMIT) && (tx->TRANSACTION_ID <= getBiggestTransactionID())){
+                        snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ACK",tx->TRANSACTION_ID , 0, 0, 0, "\r\n\r\n\r\n");
+                        send(socket, reply, strlen(reply), 0);
+                        goto CLEANUP;
+                    } else {
                     
-                    goto CLEANUP;
+                        snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ERROR", transactionId, 0, 201, 0, "\r\n\r\nINVALID TXN ID"); // This is the client's error, send message back
+                        send(socket, reply, strlen(reply), 0);
+                    
+                        goto CLEANUP;
+                    }
                 } else {                                                // Valid transaction.
                     tx->SOCKET_FD = socket;                             // Assign new socket
                     pthread_mutex_lock(&conditionsMutex);
@@ -590,6 +611,11 @@ void *startNewTranscation(void *socketfd) {
         // Skip this message and go back to recv() if invalid.
         if(transactionId != -2000) {                                                                                    // Are we a new thread?
             if( (tx->TRANSACTION_ID != transactionId) && ( (tx->METHOD != NEW_TXN) || (tx->METHOD != READ) )  ) {    // If not, is this a new transaction or is this a valid id?
+                // Is it a COMMIT asking for reacknowledgement?
+                if((tx->METHOD == COMMIT) && (tx->TRANSACTION_ID <= getBiggestTransactionID())){
+                    snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ACK",tx->TRANSACTION_ID , 0, 0, 0, "\r\n\r\n\r\n");
+                    goto CLEANUP;
+                }
                 // Send ERROR back to server.
                 snprintf(reply, OUTPUT_BUFFER_LEN, "%s %i %i %i %i %s", "ERROR", transactionId, 0, 201, 0, "\r\n\r\nInvalid TXN ID");
                 send(socket, reply, strlen(reply), 0);
@@ -690,7 +716,6 @@ void *startNewTranscation(void *socketfd) {
                         missing.pop();
                     }
                     printf("Missing sequences. Wait until we rule them all. *have them all\n");
-                    continue;
                 } else {
                     // Sort messages
                     transactions = sortMessages(transactions);
@@ -771,7 +796,82 @@ CLOSE_CONNECTION:
     decrease_connection_sem();
     return NULL;
 }
-
+/*
+ *  Replica server thread. It's a single threaded mechanism so it's the only one ever spooled.
+ *  QUICK NOTE TO PROTECT MY SELF FROM PLAGIARISM: 
+ *  some of the socket bits were taken from my CMPT 471 class which followed
+ *  http://beej.us/ 's tutorial.
+ *
+ *  Acts as a server that takes commands from the primary server
+ */
+void *BACKUP_service(void *arguments) {
+    ReplicaArgs args = *(ReplicaArgs*)arguments;
+    char cbuffer[INCOMING_BUFFER_LEN];
+    std::string buffer;
+    long incoming;
+    int index = 0;
+    std::map<int, std::queue<Transaction *>> transactions;
+    int sock = args.psocket;
+    std::string receivedString;
+    
+    printf("Spooling backup service thread.\n");
+    
+    // Get the first part of the connection, then we're good to go
+    incoming = recv(sock, cbuffer + index, 1, 0);
+    index++;
+    
+    // BACKUP thread loop - if this thread returns, means the primary is down
+    while(incoming > 0) {
+        // Get data from client byte by byte.
+        while( ((incoming = recv(sock, cbuffer + index, 1, 0) ) > 0) && (index < INCOMING_BUFFER_LEN) ) {
+            index++;
+            if( (strstr(cbuffer, "FIN") != NULL)) { // END OF DATA
+                break;
+            } else if (strstr(cbuffer, "MASTER_FAILURE") != NULL) {
+                // Master has crashed - assume master position
+                printf("REPLICA: Master failure detecting - returning");
+                return NULL;
+            } else if (strstr(cbuffer, "READY") != NULL) {
+                send(sock, "READY", strlen("READY"), 0);
+                memset(cbuffer, 0, INCOMING_BUFFER_LEN);
+                index = 0;
+                continue;
+            }
+        }
+        
+        index = 0;
+        
+        buffer = std::string(cbuffer);
+        printf("BUFFER: %s\n", buffer.c_str());
+        
+        // Find first space - all characters leading up to it is the filename
+        int poistionFilename = (int)buffer.find(" ");
+        std::string fileName = buffer.substr(0, poistionFilename);
+        printf("Filename: %s\n", fileName.c_str());
+        
+        // Get rid of filename
+        buffer = buffer.substr(poistionFilename+1);
+        
+        // Get transaction id
+        long positionToWrite = buffer.find(" ");
+        int transactionID = atoi(buffer.substr(0, positionToWrite).c_str());
+        printf("Transaction: %i\n", transactionID);
+        
+        // Get data to write minus the FIN keyword
+        buffer = buffer.substr(positionToWrite+1);
+        buffer = buffer.substr(0, buffer.size()-3);
+        
+        // Write to our file system
+        writeToFile(fileName.c_str(), buffer.c_str(), buffer.size());
+        
+        memset(cbuffer, 0, INCOMING_BUFFER_LEN);
+    }
+    
+    printf("Exiting replica mode\n");
+        
+    // Primary crashed if reached here
+    return NULL;
+}
 
 
 

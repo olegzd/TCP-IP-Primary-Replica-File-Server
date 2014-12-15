@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		8E027E8A1A061C7F0021B53B /* recoveryClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8E027E891A061C7F0021B53B /* recoveryClient.cpp */; };
 		8E649EC619FEED3A00B69C3B /* filesystem.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8E649EC519FEED3A00B69C3B /* filesystem.cpp */; };
+		8EB1946F1A25609500C80C3D /* utilities.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8EB1946D1A25609500C80C3D /* utilities.cpp */; };
 		8ECB91A119FDE86A00613CE9 /* server.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8ECB91A019FDE86A00613CE9 /* server.cpp */; };
 /* End PBXBuildFile section */
 
@@ -28,9 +29,11 @@
 		8E027E871A061C300021B53B /* recoveryClient.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = recoveryClient.h; sourceTree = "<group>"; };
 		8E027E891A061C7F0021B53B /* recoveryClient.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = recoveryClient.cpp; sourceTree = "<group>"; };
 		8E1B51FD19FF1E5500492A4D /* filesystem.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = filesystem.h; sourceTree = "<group>"; };
-		8E2EEFF71A0487480033F16F /* server.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = server.h; path = ../server.h; sourceTree = "<group>"; };
 		8E649EC519FEED3A00B69C3B /* filesystem.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = filesystem.cpp; sourceTree = "<group>"; };
 		8E649EC719FEEDBB00B69C3B /* operations.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = operations.h; sourceTree = "<group>"; };
+		8E9F9D031A19B254000502DC /* server.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = server.h; sourceTree = "<group>"; };
+		8EB1946D1A25609500C80C3D /* utilities.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = utilities.cpp; sourceTree = "<group>"; };
+		8EB1946E1A25609500C80C3D /* utilities.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = utilities.h; sourceTree = "<group>"; };
 		8ECB919D19FDE86A00613CE9 /* Server */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = Server; sourceTree = BUILT_PRODUCTS_DIR; };
 		8ECB91A019FDE86A00613CE9 /* server.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = server.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -65,11 +68,13 @@
 		8ECB919F19FDE86A00613CE9 /* Server */ = {
 			isa = PBXGroup;
 			children = (
-				8E2EEFF71A0487480033F16F /* server.h */,
+				8E9F9D031A19B254000502DC /* server.h */,
 				8ECB91A019FDE86A00613CE9 /* server.cpp */,
 				8E027E871A061C300021B53B /* recoveryClient.h */,
 				8E027E891A061C7F0021B53B /* recoveryClient.cpp */,
 				8E649EC519FEED3A00B69C3B /* filesystem.cpp */,
+				8EB1946D1A25609500C80C3D /* utilities.cpp */,
+				8EB1946E1A25609500C80C3D /* utilities.h */,
 				8E1B51FD19FF1E5500492A4D /* filesystem.h */,
 				8E649EC719FEEDBB00B69C3B /* operations.h */,
 			);
@@ -134,6 +139,7 @@
 			files = (
 				8E649EC619FEED3A00B69C3B /* filesystem.cpp in Sources */,
 				8ECB91A119FDE86A00613CE9 /* server.cpp in Sources */,
+				8EB1946F1A25609500C80C3D /* utilities.cpp in Sources */,
 				8E027E8A1A061C7F0021B53B /* recoveryClient.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

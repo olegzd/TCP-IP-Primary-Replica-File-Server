@@ -15,12 +15,15 @@
 // connection semaphore offered by the server
 int decrease_connection_sem();
 void post_connection_sem();
-Transaction *parseRequest(const char *request);
 
+typedef struct ReplicaArgs ReplicaArgs;
+struct ReplicaArgs{
+    int psocket;
+};
 
 char *getServerPort();
 
 char *getServerIP();
 
-
+void *replicaReacher(void *args);
 #endif

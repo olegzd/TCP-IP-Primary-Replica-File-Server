@@ -26,13 +26,11 @@
  Tutorial followed at http://beej.us/guide/bgnet/output/html/multipage/syscalls.html
  */
 
+
 void *recoveryClient(void *transactions) {
-    struct sockaddr_storage incomingAddr;
     struct addrinfo serverInfo;
     struct addrinfo *res;
-    socklen_t addr_size;
     int sock;
-    int sockfd;
     char ipv4[20];
     char portaddr[6];
     
@@ -86,12 +84,10 @@ void *recoveryClient(void *transactions) {
     printf("Running recovery\n");
     
     while( it != transactionHash.end() ) {
-        
-        size_t qsize = it->second.size();
-        pthread_create(&respawnThreads[currentTransactionIndex], NULL, startNewTranscation, (void*)&sock);
+        pthread_create(&respawnThreads[currentTransactionIndex], NULL, PRIMARY_startNewTranscation, (void*)&sock);
         
         sleep(0.3);
-        size_t sent = send(sock, it->second.front()->raw, strlen(it->second.front()->raw), 0);
+        send(sock, it->second.front()->raw, strlen(it->second.front()->raw), 0);
         
         
         free(it->second.front()->raw);

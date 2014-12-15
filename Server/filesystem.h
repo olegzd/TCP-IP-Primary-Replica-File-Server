@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include "operations.h"
 
+#define REPLICA_LOG_FILE_NAME ".replicate_backlog"
 
 typedef struct Transaction Transaction;
 
@@ -32,9 +33,10 @@ struct Transaction {
 char *processTransaction(Transaction *txn);
 void initializeFileSystem(const char* fullPath, char *ip, char *port);
 int getBiggestTransactionID();
+int tryReachReplica();
 
 void *recoveryCheck( void *args );
-
+void setReplicaSocket(int socketfd);
 /// Gets the data in char* format. This data is from malloc, so must free after use
 char *readFile(char *fileName);
 
@@ -42,6 +44,11 @@ void startFakeNewTranscation(Transaction *tx[], int count);
 
 void writeToFile(char *fileName, char *data, size_t len);
 
-void *startNewTranscation(void *socketfd);
+void *PRIMARY_startNewTranscation(void *socketfd);
+
+void *BACKUP_service(void *socketfd);
+
+char *getFileSystemPath();
+
 
 #endif
