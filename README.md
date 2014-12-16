@@ -1,7 +1,9 @@
 TCP-IP-Primary-Replica-File-Server
 ==================================
-WARNINGS: This was a first-time TCP/IP Socket project with rusty C++ useage. Use at your own risk.
-          The number of connections allowed is dependent on what you're building on. 
+WARNINGS: 
+This was a first-time TCP/IP Socket project with rusty C++ useage. Use at your own risk.
+The number of connections allowed is dependent on what you're building on (right now set to 256). 
+The recovery agent doesn't work (yet).
     
 
 
